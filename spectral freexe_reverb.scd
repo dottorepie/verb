@@ -11,7 +11,7 @@ s.options.maxNodes = 1024 * 4;
 //s.recHeaderFormat="aiff";
 //s.recSampleFormat ="int16";
 //s.recChannels = 8;
-~fftsize = 64*32;
+~fftsize = 64*16;
 ///bin width= samplerate/fft size (frames) ,  44100/1024
 //center freq= bin index * bin width
 ///fft size= power of two
@@ -37,20 +37,20 @@ s.waitForBoot{
 );
 
 /////fft bin exponential diffusion compensation
-//(44100/2048)*900
+///	(44100/(64*16))*463
 (
-~bins=180;
+~bins=90;
 {
 var steps = ~bins;
 ~nVals = steps.collect { |i|
-i.linexp(0, steps-1, 0.18, 900).round};
+i.linexp(0, steps-1, 0.18, 463).round};
 ~nVals.asInteger;}.value;
 );
 
 (
 SynthDef.new(\verb, {
-arg spread,room=1,mix=0;
-var chaindry,chainwet;
+arg spread,room=1,mix=0,fl=40;
+var chaindry,chainwet,follower;
 var frames=~fftsize, polytope, sig, in, chain, chain1,bins,reverfb,env,gate,dry,decay,chain11;
 var g=((1+5.sqrt)/2),s=(1+2.sqrt),az=0,el=0,n=0,verb,material_m,material_p,threshold,chainn;
 
@@ -65,27 +65,28 @@ az = (az+(2pi-(2pi/s))).wrap(pi.neg,pi);
 el = (el+(pi-(pi/s))).wrap(0.5pi.neg,0.5pi);
 polytope=Spherical(1,az,el);
 
-material_p=Complex(1,polytope.x).theta*2;          ////reflection materiality
+material_p=Complex(1,polytope.x).theta*2;   ///////////////////////reflection materiality
 material_m=polytope.rho;
-threshold=(polytope.rho*room)*mix.linexp(0,1,2,1);           /////trigger reflection threshold
 
 chain11 = chaindry.pvcollect(frames,
 {|mag, phase, index| [mag, phase]; }, frombin: ~nVals.[n], tobin: ~nVals.[n], zeroothers: 1);
 
-dry=IFFT(chain11);                                ///dry signal
-gate=(Amplitude.kr(dry,mul:n.reciprocal*10000)-threshold);           ///trigger for spectral freeze and reverb decay envelope
-decay=(polytope.rho*room.linlin(0,1,1,0))*mix;
-env=Decay2.kr(gate,0.01, decay) * mix;
-
+dry=IFFT(chain11);      //////////////////////////////dry signal
+follower=Amplitude.kr(dry,343.reciprocal*room.linlin(0,1,1,100),343.reciprocal*room.linlin(0,1,1,100),fl);
+decay=(polytope.rho*room.linlin(0,1,1,2))*mix.linlin(0,1,1,2);
+threshold=(mix.linlin(0,1,1,0.001))/polytope.rho;  ////////trigger reflection threshold
+gate=(follower>threshold);   ///////trigger for spectral freeze and reverb decay envelope
+//env=Decay2.kr(gate,0.01, decay) * mix;
+env=EnvGen.kr(Env.perc(0.01,decay,mix),gate);
 
 chain1 = PV_Freeze(chainwet.pvcollect(frames,
 {|mag, phase, index| [mag*material_m, phase+material_p]; }, frombin: ~nVals.[n], tobin: ~nVals.[n], zeroothers: 1),gate);
 
-verb=IFFT(chain1);      ///spectral freeze on reflection
+verb=IFFT(chain1);      ////////////////////////spectral freeze on reflection
 
-		sig=(verb*mix)+(dry*mix.linlin(0,1,1,0));
+sig=(verb*mix)+(dry*mix.linlin(0,1,1,0));
 
-		Out.ar(0,Pan2.ar(sig,polytope.x,spread));
+Out.ar(0,Pan2.ar(FreeVerb.ar(sig,mix,room),polytope.x,spread));
 //Out.ar(0,VBAP.ar(4,sig*0.01,~vbap_buf.bufnum,polytope.theta.raddeg,polytope.phi.raddeg,spread));
 
 n=n+1;
@@ -96,8 +97,8 @@ n=n+1;
 )
 
 	(
-~synth=Synth.new(\verb,[\spread,0.5,\room,0.5,\mix,0.01]);
+~synth=Synth.new(\verb,[\spread,1,\room,0.5,\mix,1,\fl,40]);
 //s.record(numChannels:4,duration:(1*60)+60)
 )
 
-	~synth.set(\room,0.5,\mix,0.1);
+	~synth.set(\room,1,\mix,0.8,\fl,40);
